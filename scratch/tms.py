@@ -54,6 +54,7 @@ print ('client is at', addr)
 
 
 chars_to_send = 1 # meaning True for initial case
+# while terminates when no more characters received
 while(chars_to_send):
   print('starting while loop')
 
@@ -62,7 +63,6 @@ while(chars_to_send):
     break
     
   try:
-    
     data = conn.recv(1000000)
     print (data.decode("utf-8"))
 
@@ -72,14 +72,11 @@ while(chars_to_send):
 
 # now send
     chars_to_send = conn.send(data)
-    print('chars_to_send')
-    print(chars_to_send)
+    # print('chars_to_send')
+    # print(chars_to_send)
     
   except KeyboardInterrupt:
-    print('do I get here or not?')
     stored_exception=sys.exc_info()
-    print('stored_exception')
-    print(stored_exception)
     
 # =============================================================================
 #   data = conn.recv(1000000)

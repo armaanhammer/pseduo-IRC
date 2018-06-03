@@ -52,7 +52,6 @@ while(x>0):
   #s.sendall(bytes(sys.argv[3], 'utf8')) # send test string
   
   print ('got here')
-  print (sys.argv[3])
   print (sys.argv[3].encode)
   
   data = s.recv(100000)
