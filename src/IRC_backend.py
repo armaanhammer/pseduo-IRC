@@ -6,7 +6,7 @@
 # IRC_backend.py
 # Internet Relay Chat - Backend
 
-import socket, pdb
+import socket, pdb, time
 
 MAX_CLIENTS = 30
 PORT = 22222
@@ -49,22 +49,54 @@ class Hall:
 
 
     def list_rooms(self, user):
-        if len(self.rooms) == 0:
-            msg = 'No active rooms. Create your own!\n' \
-            + 'Use /join [room_name] to create a room.\n'
-            #user.socket.sendall(msg.encode())
-        else:
-            msg = 'Listing current rooms...\n'
-            for room in self.rooms:
-                msg += room + ": " + str(len(self.rooms[room].users)) + " user(s)\n"
-        user.socket.sendall(msg.encode())
+        print('DEBUG: printing list of rooms: ')
+        print(self.rooms)
+        try:
+            if len(self.rooms) == 0:
+                msg = 'No active rooms. Create your own!\n' \
+                + 'Use /join [room_name] to create a room.\n'
+                #user.socket.sendall(msg.encode())
+            else:
+                msg = 'Listing current rooms...\n'
+                for room in self.rooms:
+                    msg += room + ": " + str(len(self.rooms[room].users)) + " user(s)\n"
+            user.socket.sendall(msg.encode())
+        except Exception as ex:
+            template = "An exception of type {0} occurred. Arguments:\n{1!r}"
+            message = template.format(type(ex).__name__, ex.args)
+            print(message)
+            print('\nwtf do I do now, Dave?')
+
+            user.socket.sendall(b'\n') # placeholder
+
 
 
     def remove_user(self, user):
-        if user.name in self.subscribed:
-            self.rooms[self.subscribed[user.name]].remove_user(user)
-            del self.subscribed[user.name]
-            print("User: " + user.name + " has left\n")
+        if user.name in self.connection_dict:
+            del self.connection_dict[user.name]
+        if user.name in self.users:
+            self.users.remove(user.name)
+        print("User: " + user.name + " has left\n")
+
+    
+    def delete_room(self, room_name):
+        print(self.connection_dict)
+        for test_user in self.connection_dict:
+            print(self.connection_dict[test_user].name)
+            if room_name in self.connection_dict[test_user].rooms:
+                print('ERROR: trying to delete a room that users still are subscribed to.')
+                print(self.connection_dict[test_user].name)
+                return #self.connection_dict[test_user].name
+        
+        if room_name in self.rooms:
+            print('room_name is in self.rooms')
+            del self.rooms[room_name] # fucks up the dict somehow
+        else:
+            print('ERROR: room_name is NOT in self.rooms')
+        print(self.rooms)
+        #self.rooms.remove(room_name)
+
+        return
 
 
     # meat of the server
@@ -74,23 +106,44 @@ class Hall:
         #print(msg)
         #print(split_msg)
         if(0 == len(split_msg)): # bad things happened
-            print('received a zero-length message!')
+            print('WARNING: received a zero-length message!\n')
             return
 
 
         print(from_user.name + " says: " + msg)
         if "name:" in msg:
             name = split_msg[1]
-            from_user.name = name
-            #print(name)
+            if name in self.users:
+                print('WARNING: user requested name already registered: ' + name + '\n')
+                print('kicking client.\n')
 
-            self.connection_dict[name] = from_user # add to dictionary
-            print('added dict key')
-            print(self.connection_dict)
+                msg = b'The username you requested: <' + name.encode() + \
+                    b'> is already registered. Please reconnect and try again.\n\n' + \
+                    b'For assistance, here is the full list of users on server: '
+                for user in self.users:
+                    print(user)
+                    msg += user.encode() + b', '
 
-            self.users.append(name)
-            print("New connection from:", from_user.name)
-            from_user.socket.sendall(instructions)
+                from_user.socket.sendall(msg + b'\n')
+                time.sleep(0.1) # DEBUG
+                from_user.socket.sendall(QUIT_STRING.encode())
+
+
+                #from_user.socket.close()
+                #self.connection_list.remove(from_user.socket)
+
+            else:
+
+                from_user.name = name
+                #print(name)
+
+                self.connection_dict[name] = from_user # add to dictionary
+                print('added dict key')
+                print(self.connection_dict[name])
+
+                self.users.append(name)
+                print("New connection from:", from_user.name)
+                from_user.socket.sendall(instructions)
 
 
         elif split_msg[0] == "/rooms": # list rooms
@@ -98,38 +151,44 @@ class Hall:
 
 
         elif split_msg[0] == "/list": # list users
+            print('I think I got /list')
             if len(split_msg) == 1: # list all users
                 #print('got here')
                 msg = b'Users on server: '
-                print('---------')
-                print(self.users)
+                #print('---------')
+                #print(self.users)
                 for user in self.users:
                     print(user)
                     msg += user.encode() + b', '
+                    #msg += user + ', '
 
-                from_user.socket.sendall(msg + b'\n')
-
-
+                #from_user.socket.sendall(msg + b'\n')
+            
             else: # list users in specified room
-                print('actually got here')
                 room_name = split_msg[1]
-                print('room_name')
-                print(room_name)
-                print(self.rooms)
 
+                if len(self.rooms) == 0:
+                    msg = b'No active rooms. Create your own!\n' \
+                        + b'Use /join [room_name] to create a room.\n'
+                else:
+                    if room_name in self.rooms:
+                        print(room_name)
+                        msg = b'Listing users in [' + room_name.encode() + b']...\n'
+                        for test_user in self.connection_dict:
+                            if room_name in self.connection_dict[test_user].rooms:
+                                msg += test_user.encode() + b', '
+                    else:
+                        msg = b'The requested room [' + room_name.encode() + b'] does not exist.\n'
 
-                if room_name in self.rooms:
-
-                    msg = self.rooms[room_name].list(from_user)
-                    print(msg)
-
-            #from_user.socket.sendall(msg + b'\n')
-
-
-        elif split_msg[0] == ("/join" or '/switch'): # join room
-            print('I think I got /join or /switch')
-            print(split_msg[0])
             print(msg)
+
+            from_user.socket.sendall(msg + b'\n')
+
+
+        elif split_msg[0] in ["/join", '/switch']: # join room
+            #print('I think I got /join or /switch')
+            #print(split_msg[0])
+            #print(msg)
             if len(split_msg) >= 2: # error check
                 room_name = split_msg[1]
 
@@ -158,23 +217,38 @@ class Hall:
 
 
         elif split_msg[0] == "/leave": # leave room
+            #print('got to leave')
             if len(split_msg) >= 2: # error check
                 room_name = split_msg[1]
 
                 if (room_name in self.rooms) and (room_name in from_user.rooms):
+                    #print('got to remove user')
+
+                    # remove room from user
+                    #del from_user.rooms[room_name]
+                    from_user.rooms.remove(room_name)
+
+                    # remove room from Hall
                     self.rooms[room_name].remove_user(from_user)
                     if len(self.rooms[room_name].users) == 0:
-                        self.rooms = self.delete_room(room_name) # WTF?
-                        from_user.rooms.remove(room_name)
-                        msg = b': You have left ' + room_name.encode() + b'\n'
+                        #print('got to IF')
+                        #self.rooms = self.delete_room(room_name) # WTF?
+                        self.delete_room(room_name) # WTF?
+
+                    msg = b': You have left ' + room_name.encode() + b'\n'
+                        
 
                 elif not (room_name in self.rooms):
+                    #print('got to does not exist')
                     msg = b'Room [' + room_name.encode() + b'] does not exist.\n'
 
                 else:
+                    #print('got to never joined')
                     msg = b'You never joined [' + room_name.encode() + b'].\n'
 
                     from_user.current_room = room_name
+
+                from_user.socket.sendall(msg)
 
             else:
                 msg = b'Usage: /leave [room_name]\n'
@@ -182,21 +256,21 @@ class Hall:
 
 
         elif split_msg[0] == "/help": # print instructions
-            print('I think I got /help')
-            user.socket.sendall(instructions)
+            #print('I think I got /help')
+            from_user.socket.sendall(instructions)
 
 
         elif split_msg[0] == "/quit": # end session
-            user.socket.sendall(QUIT_STRING.encode())
-            self.remove_user(user)
+            from_user.socket.sendall(QUIT_STRING.encode())
+            self.remove_user(from_user)
 
 
         elif split_msg[0] == "/msg": # private message another user
-            print('I think I got /msg')
+            #print('I think I got /msg')
             if len(split_msg) >= 3: # error check
                 to_user = split_msg[1]
-                print('to_user')
-                print(to_user)
+                #print('to_user')
+                #print(to_user)
                 if to_user in self.connection_dict:
                     send_msg = b'<' + from_user.name.encode() + b'>: ' + \
                     msg.split(' ',2)[2].encode()
@@ -210,11 +284,11 @@ class Hall:
 
         # end condition: broadcast, or fail
         else:
-            print('trying to broadcast')
-            print(self.rooms)
-            print(from_user.current_room)
-            print(from_user.name)
-            print(msg)
+            #print('trying to broadcast')
+            #print(self.rooms)
+            #print(from_user.current_room)
+            #print(from_user.name)
+            #print(msg)
             if from_user.current_room in self.rooms: # broadcast
                 self.rooms[from_user.current_room].broadcast(from_user.name, msg)
             else:
@@ -236,36 +310,43 @@ class Room:
             user.socket.sendall(msg.encode())
 
 
-    def broadcast(self, from_user, msg):
-        print('from_user')
-        print(from_user.encode())
-        print(msg.encode())
-        msg_out = b'[' + self.name.encode() + b'] ' + from_user.encode() + b': ' + msg.encode()
+    def broadcast(self, from_user_name, msg):
+        #print('from_user')
+        #print(from_user_name.encode())
+        #print(msg)
+        msg_out = b'[' + self.name.encode() + b'] ' + from_user_name.encode() + b': ' + msg.encode()
 
         for user in self.users:
-            if user != from_user:
+            if user != from_user_name:
                 print('user')
                 print(user.name)
-                print(from_user)
+                print(from_user_name)
                 user.socket.sendall(msg_out)
 
 
+    # deprecated function. Retained for reference
     def list(self, from_user):
+        print('DEBUG: got to list')
+        print(self.users)
         if len(self.users) > 0:
-            msg = b'Users in [' + self.name.encode() + b']:'
+            print('self.name:')
+            print(self.name)
+            msg = b'Users in [' + self.name.encode() + b']: '
             for user in self.users:
                 msg += user.name.encode() + b', '
-            else:
-                msg = b'No users in this room.'
-                # from_user.socket.sendall(msg + b'\n')
-                return msg
+        else:
+            msg = b'No users in this room.'
+            # from_user.socket.sendall(msg + b'\n')
+            return msg
 
 
     def remove_user(self, from_user):
         self.users.remove(from_user)
-        leave_msg = b'[' + self.name.encode() + b']' + \
-        from_user.name.encode() + b"has left the room\n"
-        self.broadcast(from_user, leave_msg)
+        # leave_msg = b'[' + self.name.encode() + b'] ' + \
+        #             from_user.name.encode() + b" has left the room\n"
+        leave_msg = '<' + self.name + '> ' + \
+                    from_user.name + " has left the room\n"
+        self.broadcast(from_user.name, leave_msg)
 
 
 class User:
