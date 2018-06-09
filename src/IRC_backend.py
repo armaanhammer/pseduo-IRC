@@ -8,10 +8,12 @@
 
 import socket, pdb, time
 
-MAX_CLIENTS = 30
-PORT = 22222
-QUIT_STRING = '<$quit$>'
+MAX_CLIENTS = 30 # This number can be increased. (limited only by system performance.)
+PORT = 22222 # port server listens to and clients initially connect to
+QUIT_STRING = '<$quit$>' # string to command client close connection
+#READ_BUFFER = 4096 # max size of message on clients or server
 
+# These are instructions sent to client
 instructions = b'-------------------------\n'\
 + b'Instructions:\n'\
 + b'/rooms - lists all rooms on server\n'\
@@ -26,7 +28,7 @@ instructions = b'-------------------------\n'\
 + b'/quit - ends the session\n' \
 + b'-------------------------\n'
 
-
+# function to create initial listening socket
 def create_socket(address):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -36,21 +38,36 @@ def create_socket(address):
     print("Now listening at ", address)
     return s
 
-
+# HALL CLASS 
+# server creates a single one.
+# Each Hall Class contains multiple users and mutliple clients.
+# Exists as class to functionality could be extended into the future (Allows
+# for multiple virtual servers with their own sets of Users and Rooms to live 
+# in one application.)
 class Hall:
     def __init__(self):
-        self.rooms = {} # {room_name: Room}
-        self.users = [] # {userName: roomName}
+        self.rooms = {} # dict of rooms and Room Objects
+                        # {room_name: Room}
+        self.users = [] # list of users
+                        # [users per hall]
         self.connection_list = [] # list of sockets
+                                  # [socket per user]
         self.connection_dict = {} # dict of names and sockets
+                                  # {userName: roomName}
 
+    # function to welcome new user
     def welcome_new(self, new_user):
         new_user.socket.sendall(b'Welcome to IRC.\nPlease type your name:\n')
 
-
+    # function to list users
+    # if provided no argument, lists all users on server
+    # if provided one or more arguments, tries to match first argument to a room name
+    # if finds match, lists all users in matching room
+    # if finds no match, tells client room does not exist.
+    # discards any additional arguments.
     def list_rooms(self, user):
-        print('DEBUG: printing list of rooms: ')
-        print(self.rooms)
+        #print('DEBUG: printing list of rooms: ')
+        #print(self.rooms)
         try:
             if len(self.rooms) == 0:
                 msg = 'No active rooms. Create your own!\n' \
@@ -69,8 +86,7 @@ class Hall:
 
             user.socket.sendall(b'\n') # placeholder
 
-
-
+    # function to gracefully remove user from objects on server
     def remove_user(self, user):
         if user.name in self.connection_dict:
             del self.connection_dict[user.name]
@@ -78,7 +94,7 @@ class Hall:
             self.users.remove(user.name)
         print("User: " + user.name + " has left\n")
 
-    
+    # function to gracefully remove room from objects on server
     def delete_room(self, room_name):
         print(self.connection_dict)
         for test_user in self.connection_dict:
@@ -86,11 +102,13 @@ class Hall:
             if room_name in self.connection_dict[test_user].rooms:
                 print('ERROR: trying to delete a room that users still are subscribed to.')
                 print(self.connection_dict[test_user].name)
-                return #self.connection_dict[test_user].name
+
+                return # exit function because some user still suscribed to room
         
         if room_name in self.rooms:
             print('room_name is in self.rooms')
-            del self.rooms[room_name] # fucks up the dict somehow
+            print('removing room')
+            del self.rooms[room_name] # remove room
         else:
             print('ERROR: room_name is NOT in self.rooms')
         print(self.rooms)
@@ -98,10 +116,12 @@ class Hall:
 
         return
 
-
+    # HANDLE MESSAGE function
     # meat of the server
+    # parses messages, routes data, creates and removes users and rooms
     def handle_msg(self, from_user, msg):
-
+        
+        # split message so it can be parsed
         split_msg = msg.split()
         #print(msg)
         #print(split_msg)
@@ -109,10 +129,15 @@ class Hall:
             print('WARNING: received a zero-length message!\n')
             return
 
-
+        # output message text to server for easy debugging
         print(from_user.name + " says: " + msg)
+        
+
+        # detect user trying to name themselves
         if "name:" in msg:
             name = split_msg[1]
+
+            # detect user trying to use already allocated name
             if name in self.users:
                 print('WARNING: user requested name already registered: ' + name + '\n')
                 print('kicking client.\n')
@@ -132,24 +157,27 @@ class Hall:
                 #from_user.socket.close()
                 #self.connection_list.remove(from_user.socket)
 
+            # name ok. create new user objects with name
             else:
 
                 from_user.name = name
                 #print(name)
 
                 self.connection_dict[name] = from_user # add to dictionary
-                print('added dict key')
-                print(self.connection_dict[name])
+                #print('added dict key')
+                #print(self.connection_dict[name])
 
                 self.users.append(name)
                 print("New connection from:", from_user.name)
                 from_user.socket.sendall(instructions)
 
 
+        # detect list rooms request
         elif split_msg[0] == "/rooms": # list rooms
             self.list_rooms(from_user)
 
 
+        # detect list users request
         elif split_msg[0] == "/list": # list users
             print('I think I got /list')
             if len(split_msg) == 1: # list all users
@@ -185,6 +213,7 @@ class Hall:
             from_user.socket.sendall(msg + b'\n')
 
 
+        # detect join room request or switch broadcast room request
         elif split_msg[0] in ["/join", '/switch']: # join room
             #print('I think I got /join or /switch')
             #print(split_msg[0])
@@ -212,15 +241,21 @@ class Hall:
                     self.rooms[room_name].welcome_new(from_user)
                     from_user.rooms.append(room_name)
                     from_user.current_room = room_name
+            
+            # user did not provide enough arguments.
+            # hit user with hammer of knowledge.
             else:
                 from_user.socket.sendall(instructions)
 
 
+        # detect leave room request
         elif split_msg[0] == "/leave": # leave room
             #print('got to leave')
             if len(split_msg) >= 2: # error check
                 room_name = split_msg[1]
 
+                # detect if is request valid (room exists, and user is subscribed
+                # to the room)
                 if (room_name in self.rooms) and (room_name in from_user.rooms):
                     #print('got to remove user')
 
@@ -237,11 +272,12 @@ class Hall:
 
                     msg = b': You have left ' + room_name.encode() + b'\n'
                         
-
+                # room does not exist
                 elif not (room_name in self.rooms):
                     #print('got to does not exist')
                     msg = b'Room [' + room_name.encode() + b'] does not exist.\n'
 
+                # user never joined room
                 else:
                     #print('got to never joined')
                     msg = b'You never joined [' + room_name.encode() + b'].\n'
@@ -250,21 +286,29 @@ class Hall:
 
                 from_user.socket.sendall(msg)
 
+
+            # user did not provide enough arguments.
+            # hit user with hammer of knowledge.
             else:
                 msg = b'Usage: /leave [room_name]\n'
                 from_user.socket.sendall(msg)
 
 
+        # detect instructions request
         elif split_msg[0] == "/help": # print instructions
             #print('I think I got /help')
+            # user requests hammer of knowledge
+            # hit user with hammer of knowledge.
             from_user.socket.sendall(instructions)
 
 
+        # detect quit request
         elif split_msg[0] == "/quit": # end session
             from_user.socket.sendall(QUIT_STRING.encode())
             self.remove_user(from_user)
 
 
+        # detect pricate message request
         elif split_msg[0] == "/msg": # private message another user
             #print('I think I got /msg')
             if len(split_msg) >= 3: # error check
@@ -279,6 +323,8 @@ class Hall:
                 else: # target user not on server
                     from_user.socket.sendall(b'User <' + to_user.encode() + b'> not found\n')
             else:
+                # user did not provide enough arguments.
+                # hit user with hammer of knowledge.
                 from_user.socket.sendall(instructions)
 
 
@@ -292,24 +338,30 @@ class Hall:
             if from_user.current_room in self.rooms: # broadcast
                 self.rooms[from_user.current_room].broadcast(from_user.name, msg)
             else:
-                msg = 'You are currently not in any room! \n' \
+                msg = 'You are currently broadcasting to any room! \n' \
                 + 'Use /rooms to see available rooms! \n' \
                 + 'Use /join [room_name] to join a room! \n'
+                + 'Use /switch [room_name] to switch to a room! \n'
+
                 from_user.socket.sendall(msg.encode())
 
 
+# ROOM CLASS
+# Every room is allocated one.
 class Room:
     def __init__(self, name):
-        self.users = [] # a list of sockets
-        self.name = name
+        self.users = [] # a list of sockets. This list does not contain names
+                        # of users. For names of users connected to rooms, 
+                        # refer instead to the list of rooms inside the user class
+        self.name = name # the name of the room
 
-
+    # function to welcome new user
     def welcome_new(self, from_user):
         msg = self.name + " welcomes: " + from_user.name + '\n'
         for user in self.users:
             user.socket.sendall(msg.encode())
 
-
+    # function to broadcast
     def broadcast(self, from_user_name, msg):
         #print('from_user')
         #print(from_user_name.encode())
@@ -318,28 +370,35 @@ class Room:
 
         for user in self.users:
             if user != from_user_name:
-                print('user')
-                print(user.name)
-                print(from_user_name)
+                try: 
+                    print('user')
+                    print(user.name)
+                    print(from_user_name)
+                except Exception as ex:
+                    template = "An exception of type {0} occurred. Arguments:\n{1!r}"
+                    message = template.format(type(ex).__name__, ex.args)
+                    print(message)
+                    print('\nwtf do I do now, Dave?')
                 user.socket.sendall(msg_out)
 
 
-    # deprecated function. Retained for reference
-    def list(self, from_user):
-        print('DEBUG: got to list')
-        print(self.users)
-        if len(self.users) > 0:
-            print('self.name:')
-            print(self.name)
-            msg = b'Users in [' + self.name.encode() + b']: '
-            for user in self.users:
-                msg += user.name.encode() + b', '
-        else:
-            msg = b'No users in this room.'
-            # from_user.socket.sendall(msg + b'\n')
-            return msg
+    # # deprecated function. Retained for reference
+    # def list(self, from_user):
+    #     #print('DEBUG: got to list')
+    #     #print(self.users)
+    #     if len(self.users) > 0:
+    #         print('self.name:')
+    #         print(self.name)
+    #         msg = b'Users in [' + self.name.encode() + b']: '
+    #         for user in self.users:
+    #             msg += user.name.encode() + b', '
+    #     else:
+    #         msg = b'No users in this room.'
+    #         # from_user.socket.sendall(msg + b'\n')
+    #         return msg
 
 
+    # function to remove user
     def remove_user(self, from_user):
         self.users.remove(from_user)
         # leave_msg = b'[' + self.name.encode() + b'] ' + \
@@ -349,13 +408,16 @@ class Room:
         self.broadcast(from_user.name, leave_msg)
 
 
+# USER CLASS
+# Each user is allocated one.
 class User:
     def __init__(self, socket, name = "new"):
         socket.setblocking(0)
-        self.socket = socket
-        self.name = name
-        self.rooms = []
-        self.current_room = ''
+        self.socket = socket # The socket that select() uses to communicate with
+                             # the client process. One client process exists per user
+        self.name = name # The name of the user
+        self.rooms = [] # List of room names that the user is subscribed to.
+        self.current_room = '' # Name of room that user is currently broadcasting to.
 
     def fileno(self):
         return self.socket.fileno()
